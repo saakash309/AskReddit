@@ -1,0 +1,10 @@
+[Unit]
+Description=Run AskReddit Shorts every 4 hours (fits YouTube's default upload quota)
+
+[Timer]
+OnCalendar=*-*-* 0/4:00:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

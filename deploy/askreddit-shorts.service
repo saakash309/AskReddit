@@ -1,0 +1,10 @@
+[Unit]
+Description=AskReddit Shorts - one build+upload cycle
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Edit this to the absolute path where you cloned the repo:
+WorkingDirectory=/home/YOUR_USER/AskReddit
+ExecStart=/home/YOUR_USER/AskReddit/scripts/run_scheduled.sh

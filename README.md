@@ -88,6 +88,62 @@ Each run writes `output/<post_id>_<slug>.mp4` plus a `.json` file with the
 suggested YouTube title/description/tags. Already-used post IDs are tracked
 in `output/used_posts.json` so reruns don't repeat a post.
 
+## Running on a schedule
+
+Before automating uploads: **YouTube Data API v3 has a default quota of
+10,000 units/day, and each upload costs 1,600 units — about 6 uploads/day**
+on a fresh Google Cloud project. Posting every 1–2 hours (12–24/day) will
+exceed that. Either:
+
+- run **every 4 hours** (6/day, fits the default quota), or
+- request a quota increase in Google Cloud Console → APIs & Services →
+  YouTube Data API v3 → Quotas (takes Google a few days to approve, needs a
+  short justification).
+
+This also needs to run somewhere with normal outbound internet access —
+plain cron/systemd on your own machine or a small VPS, not inside a
+sandboxed CI/agent environment (TTS uses a WebSocket connection that many
+restrictive proxies block).
+
+**One-time setup**, so scheduled runs don't need interactive input:
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+cp .env.example .env   # fill in Reddit (+ optionally Pexels) credentials
+# do one interactive run so the YouTube OAuth browser flow completes once
+# and caches a refresh token in token.json:
+.venv/bin/python main.py --upload --privacy unlisted
+```
+
+**cron** (`crontab -e`), every 4 hours:
+
+```cron
+0 */4 * * * /absolute/path/to/AskReddit/scripts/run_scheduled.sh
+```
+
+`scripts/run_scheduled.sh` activates the venv, runs `main.py --upload`, and
+logs to `output/run.log`. It uses `flock` so an overlapping run (e.g. a slow
+upload) is skipped instead of doubling up.
+
+**systemd timer** (alternative to cron, for a server you manage): copy
+`deploy/askreddit-shorts.service` and `deploy/askreddit-shorts.timer` to
+`/etc/systemd/system/`, edit the paths/user in the `.service` file, then:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now askreddit-shorts.timer
+systemctl list-timers askreddit-shorts.timer   # confirm next run
+journalctl -u askreddit-shorts.service -f      # tail logs
+```
+
+**Windows**: use Task Scheduler with a trigger repeating every 4 hours,
+action `C:\path\to\AskReddit\.venv\Scripts\python.exe main.py --upload`,
+"Start in" set to the project folder.
+
+Start with `--privacy unlisted` (edit `YOUTUBE_PRIVACY_STATUS` in `.env`,
+which `run_scheduled.sh` reads) until you've checked a few outputs, then
+switch to `public`.
+
 ## Project layout
 
 ```
@@ -104,6 +160,11 @@ src/
 assets/
   backgrounds/            your own background clips (gitignored cache excluded)
   music/                  optional background music
+scripts/
+  run_scheduled.sh         cron-friendly wrapper: activate venv, run, log, lock
+deploy/
+  askreddit-shorts.service systemd unit (edit paths before installing)
+  askreddit-shorts.timer   systemd timer, every 4 hours
 output/                   generated videos (gitignored)
 ```
 
