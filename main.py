@@ -13,6 +13,7 @@ import sys
 
 from src.config import load_config
 from src.pipeline import build_video_for_post, fetch_reddit_post
+from src.subreddit_stats import record_upload
 from src.youtube_upload import upload_video
 
 
@@ -51,6 +52,7 @@ def main() -> int:
             config.youtube_token_file,
         )
         print(f"Uploaded: https://youtu.be/{video_id}")
+        record_upload(config.output_dir / "uploads_log.jsonl", video_id, post.id, post.subreddit)
     else:
         print("Skipping upload (pass --upload to publish to YouTube).")
 

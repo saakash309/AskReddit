@@ -73,6 +73,10 @@ class Config:
     )
     youtube_privacy_status: str = field(default_factory=lambda: os.getenv("YOUTUBE_PRIVACY_STATUS", "private"))
     youtube_category_id: str = field(default_factory=lambda: os.getenv("YOUTUBE_CATEGORY_ID", "24"))
+    # Public Data API key (console.cloud.google.com -> Credentials -> API key), used
+    # read-only to pull view counts for the subreddit performance feedback loop.
+    # Leave blank to disable it (post ranking then treats all subreddits equally).
+    youtube_api_key: str = field(default_factory=lambda: os.getenv("YOUTUBE_API_KEY", ""))
 
     def __post_init__(self) -> None:
         self.output_dir.mkdir(parents=True, exist_ok=True)

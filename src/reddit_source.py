@@ -4,9 +4,10 @@ from __future__ import annotations
 import json
 import random
 import re
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import praw
 
@@ -106,51 +107,93 @@ def _extract_comments(submission, num_comments: int, max_chars: int, min_score: 
     return candidates
 
 
+def _velocity_score(submission) -> float:
+    """Upvotes per hour since posting — favors posts still gaining traction over
+    ones that peaked long ago, even if the latter has a higher raw score."""
+    age_hours = max((time.time() - submission.created_utc) / 3600, 0.5)
+    return submission.score / age_hours
+
+
+@dataclass
+class _Candidate:
+    score: float
+    subreddit: str
+    title: str
+    submission: object
+
+
 def fetch_post(
     reddit: praw.Reddit,
     config: Config,
     subreddit_name: Optional[str] = None,
     used_ids_file: Optional[Path] = None,
+    subreddit_weights: Optional[Dict[str, float]] = None,
 ) -> Optional[RedditPost]:
-    """Scan a subreddit's top posts for the first one with enough good comments."""
+    """Rank candidate posts across hot/rising/top listings by upvote velocity
+    (scaled by a per-subreddit performance weight, if given), then return the
+    first top-ranked one with enough good comments."""
     subreddits = [subreddit_name] if subreddit_name else list(config.subreddits)
     random.shuffle(subreddits)
     used_ids = _load_used_ids(used_ids_file) if used_ids_file else set()
+    subreddit_weights = subreddit_weights or {}
 
+    candidates: List[_Candidate] = []
+    seen_ids = set()
     for name in subreddits:
         subreddit = reddit.subreddit(name)
-        try:
-            submissions = subreddit.top(time_filter=config.post_time_filter, limit=config.post_scan_limit)
-        except Exception:
+        weight = subreddit_weights.get(name, 1.0)
+        listings = (
+            ("hot", {"limit": config.post_scan_limit}),
+            ("rising", {"limit": config.post_scan_limit}),
+            ("top", {"time_filter": config.post_time_filter, "limit": config.post_scan_limit}),
+        )
+        for listing_name, kwargs in listings:
+            try:
+                submissions = getattr(subreddit, listing_name)(**kwargs)
+                for submission in submissions:
+                    if submission.id in seen_ids or submission.id in used_ids:
+                        continue
+                    if submission.over_18 or submission.stickied or submission.locked:
+                        continue
+                    if not submission.is_self:
+                        continue
+                    title = _clean_text(submission.title)
+                    if not title or len(title) > config.max_title_chars:
+                        continue
+                    if not title.rstrip().endswith("?"):
+                        # AskReddit-style posts are questions; skip anything that isn't.
+                        continue
+                    seen_ids.add(submission.id)
+                    candidates.append(
+                        _Candidate(
+                            score=_velocity_score(submission) * weight,
+                            subreddit=name,
+                            title=title,
+                            submission=submission,
+                        )
+                    )
+            except Exception:
+                continue
+
+    candidates.sort(key=lambda c: c.score, reverse=True)
+
+    for candidate in candidates:
+        submission = candidate.submission
+        comments = _extract_comments(
+            submission,
+            num_comments=config.num_comments,
+            max_chars=config.max_comment_chars,
+            min_score=config.min_comment_score,
+        )
+        if len(comments) < min(2, config.num_comments):
             continue
-        for submission in submissions:
-            if submission.id in used_ids:
-                continue
-            if submission.over_18 or submission.stickied or submission.locked:
-                continue
-            if not submission.is_self:
-                continue
-            title = _clean_text(submission.title)
-            if not title or len(title) > config.max_title_chars:
-                continue
-            if not title.rstrip().endswith("?"):
-                # AskReddit-style posts are questions; skip anything that isn't.
-                continue
-            comments = _extract_comments(
-                submission,
-                num_comments=config.num_comments,
-                max_chars=config.max_comment_chars,
-                min_score=config.min_comment_score,
-            )
-            if len(comments) < min(2, config.num_comments):
-                continue
-            return RedditPost(
-                id=submission.id,
-                subreddit=name,
-                title=title,
-                author=str(submission.author) if submission.author else "unknown",
-                score=int(submission.score),
-                url=f"https://reddit.com{submission.permalink}",
-                comments=comments,
-            )
+        return RedditPost(
+            id=submission.id,
+            subreddit=candidate.subreddit,
+            title=candidate.title,
+            author=str(submission.author) if submission.author else "unknown",
+            score=int(submission.score),
+            url=f"https://reddit.com{submission.permalink}",
+            comments=comments,
+        )
     return None

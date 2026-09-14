@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
-from . import cards, narration
+from . import cards, narration, subreddit_stats
 from .background import get_background_video
 from .config import Config
 from .reddit_source import RedditPost, fetch_post, get_reddit_client, mark_used
@@ -70,7 +70,14 @@ def _make_tags(post: RedditPost) -> List[str]:
 def fetch_reddit_post(config: Config, subreddit: Optional[str] = None) -> RedditPost:
     reddit = get_reddit_client(config)
     used_ids_file = config.output_dir / "used_posts.json"
-    post = fetch_post(reddit, config, subreddit_name=subreddit, used_ids_file=used_ids_file)
+    weights = subreddit_stats.compute_weights(config)
+    post = fetch_post(
+        reddit,
+        config,
+        subreddit_name=subreddit,
+        used_ids_file=used_ids_file,
+        subreddit_weights=weights,
+    )
     if post is None:
         raise RuntimeError(
             "No suitable post found (needs to be a text question post with enough "
